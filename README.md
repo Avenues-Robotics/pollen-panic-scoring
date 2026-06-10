@@ -1,11 +1,26 @@
 # pollen-panic-scoring
 
-1. Install dependency
-```bashnpm install ws```
-2. Run
-```bashnode server.js```
-3. Connect
-Local machine: http://localhost:3000
-Other machine: http://192.168.x.x:3000 (use your actual LAN IP)
+## Run
 
-How sync works now: Every click immediately sends the full state over WebSocket directly to all connected clients — no polling, no debounce, no storage layer. Latency is just your local network (~1ms on WiFi, essentially zero on wired). The server holds the last known state so late-joining clients catch up instantly, and the client auto-reconnects if the connection drops.
+```bash
+npm install
+npm run dev
+```
+
+Open the local URL shown in the terminal:
+
+```text
+http://localhost:3000
+```
+
+Other people on the same WiFi should open the LAN URL printed by the server, for example:
+
+```text
+http://192.168.x.x:3000
+```
+
+## Room Sync
+
+Enter the same room number on every device and click `Join`. Everyone in that room shares the same score state. A different room number gets a separate score state.
+
+The server keeps the latest state for each room in memory while `npm run dev` is running, so late-joining devices catch up right away. Restarting the server clears the room states.

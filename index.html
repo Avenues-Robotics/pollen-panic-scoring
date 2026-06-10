@@ -4,13 +4,94 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Pollen Panic Scorer</title>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; background: #f5f5f5; }
-  button { font-family: inherit; }
+  button, input { font-family: inherit; }
+  .app-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  .middle-panel {
+    width: 150px;
+    padding: 1rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    background: #f0f0f0;
+    border-left: 0.5px solid #ddd;
+    border-right: 0.5px solid #ddd;
+  }
+  .room-control {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: 0.5px solid #c8c8c8;
+    background: white;
+  }
+  .room-control label {
+    display: block;
+    margin-bottom: 5px;
+    color: #333;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .room-form {
+    display: flex;
+    gap: 5px;
+  }
+  .room-form input {
+    width: 0;
+    min-width: 0;
+    flex: 1;
+    padding: 7px 6px;
+    border: 1px solid #999;
+    border-radius: 7px;
+    color: #111;
+    font-size: 13px;
+  }
+  .room-form button {
+    padding: 7px 8px;
+    border-radius: 7px;
+    border: 1.5px solid #2a5d82;
+    background: #2a5d82;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .room-active {
+    min-height: 15px;
+    margin-top: 6px;
+    color: #555;
+    font-size: 11px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 760px) {
+    .app-shell {
+      grid-template-columns: 1fr;
+    }
+    .middle-panel {
+      order: -1;
+      width: 100% !important;
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 0.75rem !important;
+    }
+    .middle-panel > * {
+      width: 140px !important;
+    }
+    .middle-panel .room-control {
+      width: min(100%, 280px) !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -19,6 +100,7 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 const HIVE_MAX = [3, 2, 3];
+const ROOM_STORAGE_KEY = "pollen-panic-room";
 
 const defaultTeam = () => ({
   hives: [0, 0, 0],
@@ -29,6 +111,19 @@ const defaultTeam = () => ({
 });
 
 const defaultState = () => ({ red: defaultTeam(), blue: defaultTeam(), history: [] });
+
+function normalizeRoom(value) {
+  return String(value || "").trim().replace(/\s+/g, "-").slice(0, 32);
+}
+
+function getInitialRoom() {
+  try {
+    const fromUrl = new URLSearchParams(location.search).get("room");
+    return normalizeRoom(fromUrl || localStorage.getItem(ROOM_STORAGE_KEY) || "");
+  } catch {
+    return "";
+  }
+}
 
 function liveHiveStats(team) {
   let pollen = 0, hiveBonus = 0;
@@ -83,7 +178,7 @@ function ScoreTable({ autoStats, teleStats, livePollen, liveHiveBonus, phase }) 
   const ah = autoStats.hiveBonus + (lp === "auto" ? liveHiveBonus : 0);
   const tp = teleStats.pollen + (lp === "tele" ? livePollen : 0);
   const th = teleStats.hiveBonus + (lp === "tele" ? liveHiveBonus : 0);
-  const thStyle = { fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "#555", fontWeight: 500, textAlign: "right", padding: "4px 4px 2px" };
+  const thStyle = { fontSize: 10, textTransform: "uppercase", letterSpacing: 0, color: "#555", fontWeight: 500, textAlign: "right", padding: "4px 4px 2px" };
   const tdStyle = { fontSize: 12, padding: "2px 4px", color: "#111", textAlign: "right" };
   const tdLabel = { fontSize: 12, padding: "2px 4px", color: "#444", textAlign: "left" };
   return (
@@ -111,7 +206,7 @@ function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onC
       <div style={{ fontSize: 64, fontWeight: 500, textAlign: "center", lineHeight: 1, color: teamColor }}>{score}</div>
       <PhaseBadge phase={teamData.phase} />
       <div style={{ background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: 10, border: "0.5px solid rgba(0,0,0,0.12)" }}>
-        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#333", marginBottom: 6 }}>Hives — tap to add pollen</div>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0, color: "#333", marginBottom: 6 }}>Hives — tap to add pollen</div>
         <div style={{ display: "flex", gap: 10, justifyContent: "space-around", alignItems: "flex-end" }}>
           {[0, 1, 2].map(i => <Hive key={i} count={teamData.hives[i]} max={HIVE_MAX[i]} isFull={teamData.hives[i] >= HIVE_MAX[i]} teamColor={teamColor} onAdd={() => onAddToHive(i)} onRemove={() => onRemoveFromHive(i)} />)}
         </div>
@@ -122,7 +217,7 @@ function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onC
         <ScoreTable autoStats={teamData.auto} teleStats={teamData.tele} livePollen={live.pollen} liveHiveBonus={live.hiveBonus} phase={teamData.phase} />
       </div>
       <div style={{ background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: 10, border: "0.5px solid rgba(0,0,0,0.12)" }}>
-        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#333", marginBottom: 6 }}>Penalties against {teamId}</div>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0, color: "#333", marginBottom: 6 }}>Penalties against {teamId}</div>
         <button onClick={() => onPenalty("cross")}   style={btnStyle()}>Crossed midline + contact (−10)</button>
         <button onClick={() => onPenalty("hivehit")} style={btnStyle()}>Contacted opponent's hive (−3)</button>
         <button onClick={() => onPenalty("descore")} style={btnStyle()}>De-scored opponent pollen (−2)</button>
@@ -144,43 +239,72 @@ function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onC
 
 function App() {
   const [state, setState] = useState(defaultState);
+  const [roomInput, setRoomInput] = useState(getInitialRoom);
+  const [activeRoom, setActiveRoom] = useState("");
   const stateRef = useRef(state);
   const wsRef = useRef(null);
-  const isSyncing = useRef(false);
+  const activeRoomRef = useRef("");
+  const requestedRoomRef = useRef(roomInput);
   const [flashRed, setFlashRed] = useState("");
   const [flashBlue, setFlashBlue] = useState("");
   const [flashRedLog, setFlashRedLog] = useState("");
   const [flashBlueLog, setFlashBlueLog] = useState("");
-  const [syncStatus, setSyncStatus] = useState("⟳ connecting…");
+  const [syncStatus, setSyncStatus] = useState("connecting...");
   const flashTimeout = useRef({});
 
   // WebSocket setup
   useEffect(() => {
-    const WS_URL = `ws://${location.host}`;
+    const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
     let ws;
     let reconnectTimer;
+
+    const sendJoin = (room) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "join", room }));
+      }
+    };
 
     function connect() {
       ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
-      ws.onopen = () => setSyncStatus("● live");
+      ws.onopen = () => {
+        const room = requestedRoomRef.current;
+        if (room) {
+          setSyncStatus(`joining room ${room}...`);
+          sendJoin(room);
+        } else {
+          setSyncStatus("enter a room");
+        }
+      };
 
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
-          if (msg.type === "state") {
-            isSyncing.current = true;
+          if (msg.type === "room-state" && msg.room === requestedRoomRef.current) {
+            const incoming = msg.payload || defaultState();
+            activeRoomRef.current = msg.room;
+            setActiveRoom(msg.room);
+            setState(incoming);
+            stateRef.current = incoming;
+            setSyncStatus(`live in room ${msg.room}`);
+          }
+          if (msg.type === "state" && msg.room === activeRoomRef.current) {
             const incoming = msg.payload;
             setState(incoming);
             stateRef.current = incoming;
-            isSyncing.current = false;
+          }
+          if (msg.type === "left") {
+            setSyncStatus("enter a room");
+          }
+          if (msg.type === "error") {
+            setSyncStatus(msg.message || "sync error");
           }
         } catch {}
       };
 
       ws.onclose = () => {
-        setSyncStatus("○ disconnected — reconnecting…");
+        setSyncStatus("disconnected - reconnecting...");
         reconnectTimer = setTimeout(connect, 1500);
       };
 
@@ -193,10 +317,44 @@ function App() {
 
   const broadcast = useCallback((s) => {
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "state", payload: s }));
+    const room = activeRoomRef.current;
+    if (room && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "state", room, payload: s }));
     }
   }, []);
+
+  const joinRoom = useCallback((rawRoom = roomInput) => {
+    const room = normalizeRoom(rawRoom);
+    requestedRoomRef.current = room;
+    setRoomInput(room);
+
+    try {
+      const url = new URL(location.href);
+      if (room) url.searchParams.set("room", room);
+      else url.searchParams.delete("room");
+      history.replaceState(null, "", url);
+      if (room) localStorage.setItem(ROOM_STORAGE_KEY, room);
+      else localStorage.removeItem(ROOM_STORAGE_KEY);
+    } catch {}
+
+    if (!room) {
+      const fresh = defaultState();
+      activeRoomRef.current = "";
+      setActiveRoom("");
+      setState(fresh);
+      stateRef.current = fresh;
+      setSyncStatus("enter a room");
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "leave" }));
+      }
+      return;
+    }
+
+    setSyncStatus(`joining room ${room}...`);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "join", room }));
+    }
+  }, [roomInput]);
 
   const flash = useCallback((team, msg, ms = 2500) => {
     const setter = team === "red" ? setFlashRed : setFlashBlue;
@@ -303,11 +461,19 @@ function App() {
   const bothEnd   = state.red.phase === "end" && state.blue.phase === "end";
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", minHeight: "100vh" }}>
+    <div className="app-shell">
       <TeamPanel teamId="red"  teamData={state.red}  score={redScore}  onAddToHive={i => addToHive("red", i)}  onRemoveFromHive={i => removeFromHive("red", i)}  onClearHives={() => clearHives("red")}  onPenalty={t => addPenalty("red", t)}  onTransition={() => transitionTeam("red")}  flashMsg={flashRed}  flashLog={flashRedLog} />
 
-      <div style={{ width: 140, padding: "1rem 0.5rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem", background: "#f0f0f0", borderLeft: "0.5px solid #ddd", borderRight: "0.5px solid #ddd" }}>
-        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#333", textAlign: "center" }}>Game</div>
+      <div className="middle-panel">
+        <div className="room-control">
+          <label htmlFor="room-number">Room</label>
+          <form className="room-form" onSubmit={(e) => { e.preventDefault(); joinRoom(); }}>
+            <input id="room-number" value={roomInput} onChange={(e) => setRoomInput(e.target.value)} placeholder="101" inputMode="numeric" autoComplete="off" />
+            <button type="submit">Join</button>
+          </form>
+          <div className="room-active">{activeRoom ? `Room ${activeRoom}` : "No room"}</div>
+        </div>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0, color: "#333", textAlign: "center" }}>Game</div>
         <button onClick={newGame} style={{ padding: "8px 12px", borderRadius: 8, border: "2px solid #2a7a2a", background: "#2a7a2a", fontSize: 12, fontWeight: 500, cursor: "pointer", width: "100%", color: "white", fontFamily: "inherit" }}>▶ New Game</button>
         <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
         <div style={{ fontSize: 10, color: "#555", textAlign: "center" }}>Red phase</div>

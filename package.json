@@ -1,0 +1,14 @@
+{
+  "name": "pollen-panic-scoring",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@babel/standalone": "^7.26.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.18.0"
+  }
+}
