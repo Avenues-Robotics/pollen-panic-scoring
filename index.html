@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pollen Panic Scorer</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; }
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const HIVE_MAX = [3, 2, 3];
+
+const defaultTeam = () => ({
+  hives: [0, 0, 0],
+  phase: "pre",
+  auto: { pollen: 0, hiveBonus: 0, clearBonus: 0 },
+  tele: { pollen: 0, hiveBonus: 0, clearBonus: 0 },
+  penalties: 0,
+});
+
+const defaultState = () => ({ red: defaultTeam(), blue: defaultTeam(), history: [] });
+
+function liveHiveStats(team) {
+  let pollen = 0, hiveBonus = 0;
+  team.hives.forEach((h, i) => { pollen += h; if (h >= HIVE_MAX[i]) hiveBonus += 5; });
+  return { pollen, hiveBonus };
+}
+
+function calcScore(team) {
+  const live = liveHiveStats(team);
+  return (
+    team.auto.pollen + team.auto.hiveBonus + team.auto.clearBonus +
+    team.tele.pollen + team.tele.hiveBonus + team.tele.clearBonus +
+    live.pollen + live.hiveBonus + team.penalties
+  );
+}
+
+function currentPeriod(team) {
+  return team.phase === "tele" || team.phase === "end" ? "tele" : "auto";
+}
+
+const PHASE_LABELS = { pre: "Pre-game", auto: "Autonomous", tele: "TeleOp", end: "Final" };
+
+function PhaseBadge({ phase, style = {} }) {
+  const colors = { pre: { bg: "#eee", color: "#555" }, auto: { bg: "#d4edda", color: "#155724" }, tele: { bg: "#d0e4ff", color: "#0a2e6e" }, end: { bg: "#e2e2e2", color: "#222" } };
+  const c = colors[phase] || colors.pre;
+  return <div style={{ fontSize: 11, fontWeight: 500, textAlign: "center", padding: "4px 8px", borderRadius: 6, background: c.bg, color: c.color, ...style }}>{PHASE_LABELS[phase]}</div>;
+}
+
+function Ball({ filled }) {
+  return <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0, background: filled ? "radial-gradient(circle at 35% 35%, #ffe566, #c8900a)" : "#e0e0e0", border: filled ? "none" : "1.5px dashed #aaa", transition: "all 0.2s" }} />;
+}
+
+function Hive({ count, max, isFull, teamColor, onAdd, onRemove }) {
+  const borderColor = isFull ? teamColor : "#bbb";
+  const bg = isFull ? (teamColor === "#b02020" ? "#fff5f5" : "#f5f7ff") : "white";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 }}>
+      <div onClick={onAdd} style={{ display: "flex", flexDirection: "column-reverse", gap: 4, alignItems: "center", cursor: "pointer", padding: "8px 6px", borderRadius: 10, border: `2px solid ${borderColor}`, background: bg, width: "100%", minHeight: 60, justifyContent: "flex-start", transition: "border-color 0.15s" }}>
+        {Array.from({ length: max }, (_, s) => <Ball key={s} filled={s < count} />)}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: 11, color: "#333" }}>H{HIVE_MAX.indexOf(max) + 1}</span>
+        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ width: 20, height: 20, borderRadius: "50%", border: "1.5px solid #666", background: "white", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#333", padding: 0, lineHeight: 1 }}>−</button>
+      </div>
+    </div>
+  );
+}
+
+function ScoreTable({ autoStats, teleStats, livePollen, liveHiveBonus, phase }) {
+  const lp = phase === "tele" || phase === "end" ? "tele" : "auto";
+  const ap = autoStats.pollen + (lp === "auto" ? livePollen : 0);
+  const ah = autoStats.hiveBonus + (lp === "auto" ? liveHiveBonus : 0);
+  const tp = teleStats.pollen + (lp === "tele" ? livePollen : 0);
+  const th = teleStats.hiveBonus + (lp === "tele" ? liveHiveBonus : 0);
+  const thStyle = { fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "#555", fontWeight: 500, textAlign: "right", padding: "4px 4px 2px" };
+  const tdStyle = { fontSize: 12, padding: "2px 4px", color: "#111", textAlign: "right" };
+  const tdLabel = { fontSize: 12, padding: "2px 4px", color: "#444", textAlign: "left" };
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8, borderTop: "0.5px solid rgba(0,0,0,0.12)" }}>
+      <thead><tr><th style={{ ...thStyle, textAlign: "left" }}></th><th style={thStyle}>Auto</th><th style={thStyle}>Tele</th></tr></thead>
+      <tbody>
+        <tr><td style={tdLabel}>Pollen scored</td><td style={tdStyle}>{ap}</td><td style={tdStyle}>{tp}</td></tr>
+        <tr><td style={tdLabel}>Hive bonus</td><td style={tdStyle}>{ah}</td><td style={tdStyle}>{th}</td></tr>
+        <tr><td style={tdLabel}>Clear bonus</td><td style={tdStyle}>{autoStats.clearBonus}</td><td style={tdStyle}>{teleStats.clearBonus}</td></tr>
+      </tbody>
+    </table>
+  );
+}
+
+function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onClearHives, onPenalty, onTransition, flashMsg, flashLog }) {
+  const isRed = teamId === "red";
+  const teamColor = isRed ? "#b02020" : "#1a3db0";
+  const clearColor = isRed ? "#8a1515" : "#0e2e8a";
+  const panelBg = isRed ? "#fff0f0" : "#f0f4ff";
+  const live = liveHiveStats(teamData);
+  const btnStyle = (danger = false) => ({ display: "block", width: "100%", marginTop: 4, padding: "7px 8px", borderRadius: 8, border: `1.5px solid ${danger ? "#a00" : "#333"}`, background: "white", color: danger ? "#a00" : "#111", fontSize: 11, cursor: "pointer", textAlign: "center", fontFamily: "inherit" });
+  return (
+    <div style={{ padding: "1.5rem 1rem", display: "flex", flexDirection: "column", gap: "1rem", background: panelBg, borderRight: isRed ? "1px solid #e0b0b0" : "none", borderLeft: isRed ? "none" : "1px solid #b0c0e0" }}>
+      <div style={{ fontSize: 18, fontWeight: 500, textAlign: "center", color: teamColor }}>{isRed ? "🔴 RED" : "🔵 BLUE"}</div>
+      <div style={{ fontSize: 64, fontWeight: 500, textAlign: "center", lineHeight: 1, color: teamColor }}>{score}</div>
+      <PhaseBadge phase={teamData.phase} />
+      <div style={{ background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: 10, border: "0.5px solid rgba(0,0,0,0.12)" }}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#333", marginBottom: 6 }}>Hives — tap to add pollen</div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "space-around", alignItems: "flex-end" }}>
+          {[0, 1, 2].map(i => <Hive key={i} count={teamData.hives[i]} max={HIVE_MAX[i]} isFull={teamData.hives[i] >= HIVE_MAX[i]} teamColor={teamColor} onAdd={() => onAddToHive(i)} onRemove={() => onRemoveFromHive(i)} />)}
+        </div>
+        <div style={{ fontSize: 11, color: "#333", textAlign: "center", minHeight: 16, marginTop: 4 }}>{flashMsg}</div>
+        <button onClick={onClearHives} style={{ width: "100%", padding: 9, borderRadius: 8, border: `2px solid ${clearColor}`, fontSize: 12, fontWeight: 500, cursor: "pointer", marginTop: 6, background: "white", color: clearColor, fontFamily: "inherit" }}>
+          CLEAR HIVES (+10 if all full)
+        </button>
+        <ScoreTable autoStats={teamData.auto} teleStats={teamData.tele} livePollen={live.pollen} liveHiveBonus={live.hiveBonus} phase={teamData.phase} />
+      </div>
+      <div style={{ background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: 10, border: "0.5px solid rgba(0,0,0,0.12)" }}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#333", marginBottom: 6 }}>Penalties against {teamId}</div>
+        <button onClick={() => onPenalty("cross")}   style={btnStyle()}>Crossed midline + contact (−10)</button>
+        <button onClick={() => onPenalty("hivehit")} style={btnStyle()}>Contacted opponent's hive (−3)</button>
+        <button onClick={() => onPenalty("descore")} style={btnStyle()}>De-scored opponent pollen (−2)</button>
+        <button onClick={() => onPenalty("gate")}    style={btnStyle(true)}>Activated hive gate (−10)</button>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 500, borderTop: "0.5px solid rgba(0,0,0,0.12)", marginTop: 4, paddingTop: 4 }}>
+          <span style={{ color: "#444" }}>Total penalties</span>
+          <span style={{ color: "#a00" }}>{teamData.penalties}</span>
+        </div>
+      </div>
+      {teamData.phase === "auto" && (
+        <button onClick={onTransition} style={{ width: "100%", padding: 11, borderRadius: 8, border: `2px solid ${clearColor}`, background: clearColor, color: "white", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>
+          End Auto → Start TeleOp
+        </button>
+      )}
+      <div style={{ fontSize: 11, color: "#333", textAlign: "center", minHeight: 16 }}>{flashLog}</div>
+    </div>
+  );
+}
+
+function App() {
+  const [state, setState] = useState(defaultState);
+  const stateRef = useRef(state);
+  const wsRef = useRef(null);
+  const isSyncing = useRef(false);
+  const [flashRed, setFlashRed] = useState("");
+  const [flashBlue, setFlashBlue] = useState("");
+  const [flashRedLog, setFlashRedLog] = useState("");
+  const [flashBlueLog, setFlashBlueLog] = useState("");
+  const [syncStatus, setSyncStatus] = useState("⟳ connecting…");
+  const flashTimeout = useRef({});
+
+  // WebSocket setup
+  useEffect(() => {
+    const WS_URL = `ws://${location.host}`;
+    let ws;
+    let reconnectTimer;
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => setSyncStatus("● live");
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "state") {
+            isSyncing.current = true;
+            const incoming = msg.payload;
+            setState(incoming);
+            stateRef.current = incoming;
+            isSyncing.current = false;
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        setSyncStatus("○ disconnected — reconnecting…");
+        reconnectTimer = setTimeout(connect, 1500);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+    return () => { clearTimeout(reconnectTimer); ws?.close(); };
+  }, []);
+
+  const broadcast = useCallback((s) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "state", payload: s }));
+    }
+  }, []);
+
+  const flash = useCallback((team, msg, ms = 2500) => {
+    const setter = team === "red" ? setFlashRed : setFlashBlue;
+    setter(msg);
+    clearTimeout(flashTimeout.current[team]);
+    flashTimeout.current[team] = setTimeout(() => setter(""), ms);
+  }, []);
+
+  const flashLog = useCallback((team, msg, ms = 2500) => {
+    const setter = team === "red" ? setFlashRedLog : setFlashBlueLog;
+    setter(msg);
+    clearTimeout(flashTimeout.current[team + "log"]);
+    flashTimeout.current[team + "log"] = setTimeout(() => setter(""), ms);
+  }, []);
+
+  const snapshot = (s) => {
+    const hist = [...(s.history || [])];
+    hist.push(JSON.stringify({ red: JSON.parse(JSON.stringify(s.red)), blue: JSON.parse(JSON.stringify(s.blue)) }));
+    if (hist.length > 30) hist.shift();
+    return hist;
+  };
+
+  const update = (fn) => {
+    setState(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next.history = snapshot(prev);
+      fn(next);
+      stateRef.current = next;
+      broadcast(next);
+      return next;
+    });
+  };
+
+  const addToHive = (team, i) => {
+    const t = stateRef.current[team];
+    if (t.phase === "pre" || t.phase === "end") return;
+    if (t.hives[i] >= HIVE_MAX[i]) { flash(team, `H${i + 1} is full!`); return; }
+    update(s => {
+      s[team].hives[i]++;
+      if (s[team].hives[i] === HIVE_MAX[i]) flash(team, `🌟 H${i + 1} full! +5 at period end.`);
+    });
+  };
+
+  const removeFromHive = (team, i) => {
+    const t = stateRef.current[team];
+    if (t.hives[i] <= 0 || t.phase === "pre" || t.phase === "end") return;
+    update(s => { s[team].hives[i]--; });
+  };
+
+  const bankHives = (s, team, period) => {
+    s[team].hives.forEach((h, i) => {
+      s[team][period].pollen += h;
+      if (h >= HIVE_MAX[i]) s[team][period].hiveBonus += 5;
+    });
+    s[team].hives = [0, 0, 0];
+  };
+
+  const clearHives = (team) => {
+    const t = stateRef.current[team];
+    if (t.phase === "pre" || t.phase === "end") return;
+    update(s => {
+      const period = currentPeriod(s[team]);
+      const allFull = s[team].hives.every((h, i) => h >= HIVE_MAX[i]);
+      bankHives(s, team, period);
+      if (allFull) { s[team][period].clearBonus += 10; flash(team, "+10 pts — all 3 hives cleared!", 3500); }
+      else flash(team, "Hives cleared.");
+    });
+  };
+
+  const addPenalty = (team, type) => {
+    if (stateRef.current[team].phase === "pre") return;
+    const amounts = { cross: -10, hivehit: -3, descore: -2, gate: -10 };
+    const labels  = { cross: "−10 (midline)", hivehit: "−3 (hive contact)", descore: "−2 (de-scored)", gate: "−10 (hive gate)" };
+    update(s => { s[team].penalties += amounts[type]; });
+    flashLog(team, labels[type]);
+  };
+
+  const newGame = () => {
+    update(s => {
+      s.red  = defaultTeam(); s.red.phase  = "auto";
+      s.blue = defaultTeam(); s.blue.phase = "auto";
+    });
+  };
+
+  const transitionTeam = (team) => {
+    if (stateRef.current[team].phase !== "auto") return;
+    update(s => { bankHives(s, team, "auto"); s[team].phase = "tele"; });
+  };
+
+  const undoLast = () => {
+    if (!stateRef.current.history?.length) return;
+    setState(prev => {
+      const hist = [...prev.history];
+      const prevSnap = JSON.parse(hist.pop());
+      const next = { ...prevSnap, history: hist };
+      stateRef.current = next;
+      broadcast(next);
+      return next;
+    });
+  };
+
+  const redScore  = calcScore(state.red);
+  const blueScore = calcScore(state.blue);
+  const bothEnd   = state.red.phase === "end" && state.blue.phase === "end";
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", minHeight: "100vh" }}>
+      <TeamPanel teamId="red"  teamData={state.red}  score={redScore}  onAddToHive={i => addToHive("red", i)}  onRemoveFromHive={i => removeFromHive("red", i)}  onClearHives={() => clearHives("red")}  onPenalty={t => addPenalty("red", t)}  onTransition={() => transitionTeam("red")}  flashMsg={flashRed}  flashLog={flashRedLog} />
+
+      <div style={{ width: 140, padding: "1rem 0.5rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "0.75rem", background: "#f0f0f0", borderLeft: "0.5px solid #ddd", borderRight: "0.5px solid #ddd" }}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#333", textAlign: "center" }}>Game</div>
+        <button onClick={newGame} style={{ padding: "8px 12px", borderRadius: 8, border: "2px solid #2a7a2a", background: "#2a7a2a", fontSize: 12, fontWeight: 500, cursor: "pointer", width: "100%", color: "white", fontFamily: "inherit" }}>▶ New Game</button>
+        <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
+        <div style={{ fontSize: 10, color: "#555", textAlign: "center" }}>Red phase</div>
+        <PhaseBadge phase={state.red.phase} style={{ width: "100%" }} />
+        <div style={{ fontSize: 10, color: "#555", textAlign: "center" }}>Blue phase</div>
+        <PhaseBadge phase={state.blue.phase} style={{ width: "100%" }} />
+        <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
+        <div style={{ textAlign: "center", fontSize: 13, fontWeight: 500 }}>
+          {bothEnd
+            ? redScore > blueScore ? <span style={{ color: "#b02020" }}>🔴 Red wins!<br />{redScore} – {blueScore}</span>
+            : blueScore > redScore ? <span style={{ color: "#1a3db0" }}>🔵 Blue wins!<br />{blueScore} – {redScore}</span>
+            : <span style={{ color: "#333" }}>Tied<br />{redScore} – {blueScore}</span>
+            : <span style={{ fontSize: 12, color: "#333" }}>{redScore} – {blueScore}</span>}
+        </div>
+        <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
+        <button onClick={undoLast} style={{ fontSize: 11, color: "#333", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", width: "100%", fontFamily: "inherit" }}>↩ undo</button>
+        <div style={{ fontSize: 11, color: "#555", textAlign: "center" }}>{syncStatus}</div>
+      </div>
+
+      <TeamPanel teamId="blue" teamData={state.blue} score={blueScore} onAddToHive={i => addToHive("blue", i)} onRemoveFromHive={i => removeFromHive("blue", i)} onClearHives={() => clearHives("blue")} onPenalty={t => addPenalty("blue", t)} onTransition={() => transitionTeam("blue")} flashMsg={flashBlue} flashLog={flashBlueLog} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
