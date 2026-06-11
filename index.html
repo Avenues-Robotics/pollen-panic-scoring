@@ -117,8 +117,12 @@ const defaultTeam = () => ({
   penalties: 0,
 });
 
-const defaultTimer = () => ({ segment: "idle", startedAt: null });
+const defaultTimer = () => ({ segment: "idle", startedAt: null, ownerId: null });
 const defaultState = () => ({ red: defaultTeam(), blue: defaultTeam(), history: [], timer: defaultTimer() });
+
+function makeClientId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 function normalizeRoom(value) {
   return String(value || "").trim().replace(/\s+/g, "-").slice(0, 32);
@@ -283,6 +287,7 @@ function App() {
   const wsRef = useRef(null);
   const activeRoomRef = useRef("");
   const requestedRoomRef = useRef(roomInput);
+  const clientIdRef = useRef(makeClientId());
   const [flashRed, setFlashRed] = useState("");
   const [flashBlue, setFlashBlue] = useState("");
   const [flashRedLog, setFlashRedLog] = useState("");
@@ -469,14 +474,17 @@ function App() {
     const timer = state.timer || defaultTimer();
     if (!timer.startedAt || !MATCH_SEGMENTS[timer.segment]) return;
     const elapsed = (Date.now() - timer.startedAt) / 1000;
+    const isTimerOwner = timer.ownerId === clientIdRef.current;
 
     if (timer.segment === "auto" && elapsed >= MATCH_SEGMENTS.auto.seconds && !buzzerRef.current.auto) {
       buzzerRef.current.auto = true;
       buzzerRef.current.transitionSecond = null;
       playBuzzer(3);
-      updateSystem(s => {
-        s.timer = { segment: "transition", startedAt: Date.now() };
-      });
+      if (isTimerOwner) {
+        updateSystem(s => {
+          s.timer = { segment: "transition", startedAt: Date.now(), ownerId: clientIdRef.current };
+        });
+      }
     }
 
     if (timer.segment === "transition") {
@@ -491,25 +499,29 @@ function App() {
     if (timer.segment === "transition" && elapsed >= MATCH_SEGMENTS.transition.seconds && !buzzerRef.current.teleStart) {
       buzzerRef.current.teleStart = true;
       playBuzzer(1);
-      updateSystem(s => {
-        if (s.red.phase === "auto") bankHives(s, "red", "auto", { clear: false, finalize: true });
-        if (s.blue.phase === "auto") bankHives(s, "blue", "auto", { clear: false, finalize: true });
-        s.red.phase = "tele";
-        s.blue.phase = "tele";
-        s.timer = { segment: "tele", startedAt: Date.now() };
-      });
+      if (isTimerOwner) {
+        updateSystem(s => {
+          if (s.red.phase === "auto") bankHives(s, "red", "auto", { clear: false, finalize: true });
+          if (s.blue.phase === "auto") bankHives(s, "blue", "auto", { clear: false, finalize: true });
+          s.red.phase = "tele";
+          s.blue.phase = "tele";
+          s.timer = { segment: "tele", startedAt: Date.now(), ownerId: clientIdRef.current };
+        });
+      }
     }
 
     if (timer.segment === "tele" && elapsed >= MATCH_SEGMENTS.tele.seconds && !buzzerRef.current.final) {
       buzzerRef.current.final = true;
       playBuzzer(3);
-      updateSystem(s => {
-        bankHives(s, "red", "tele");
-        bankHives(s, "blue", "tele");
-        s.red.phase = "end";
-        s.blue.phase = "end";
-        s.timer = { segment: "done", startedAt: Date.now() };
-      });
+      if (isTimerOwner) {
+        updateSystem(s => {
+          bankHives(s, "red", "tele");
+          bankHives(s, "blue", "tele");
+          s.red.phase = "end";
+          s.blue.phase = "end";
+          s.timer = { segment: "done", startedAt: Date.now(), ownerId: clientIdRef.current };
+        });
+      }
     }
   }, [state.timer, timerTick, playBuzzer, updateSystem]);
 
@@ -576,7 +588,7 @@ function App() {
     if (AudioContext && !audioContextRef.current) audioContextRef.current = new AudioContext();
     audioContextRef.current?.resume?.();
     update(s => {
-      s.timer = { segment: "auto", startedAt: Date.now() };
+      s.timer = { segment: "auto", startedAt: Date.now(), ownerId: clientIdRef.current };
     });
   };
 
