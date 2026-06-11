@@ -13,12 +13,12 @@
   button, input { font-family: inherit; }
   .app-shell {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 300px minmax(0, 1fr);
     min-height: 100vh;
   }
   .middle-panel {
-    width: 150px;
-    padding: 1rem 0.5rem;
+    width: 300px;
+    padding: 1rem;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -101,16 +101,24 @@ const { useState, useEffect, useRef, useCallback } = React;
 
 const HIVE_MAX = [3, 2, 3];
 const ROOM_STORAGE_KEY = "pollen-panic-room";
+const MATCH_SEGMENTS = {
+  auto: { label: "Start Auto", seconds: 30 },
+  transition: { label: "Countdown", seconds: 10 },
+  tele: { label: "TeleOp", seconds: 120 },
+  done: { label: "Match Complete", seconds: 0 },
+};
 
 const defaultTeam = () => ({
   hives: [0, 0, 0],
   phase: "pre",
+  autoFinalized: false,
   auto: { pollen: 0, hiveBonus: 0, clearBonus: 0 },
   tele: { pollen: 0, hiveBonus: 0, clearBonus: 0 },
   penalties: 0,
 });
 
-const defaultState = () => ({ red: defaultTeam(), blue: defaultTeam(), history: [] });
+const defaultTimer = () => ({ segment: "idle", startedAt: null });
+const defaultState = () => ({ red: defaultTeam(), blue: defaultTeam(), history: [], timer: defaultTimer() });
 
 function normalizeRoom(value) {
   return String(value || "").trim().replace(/\s+/g, "-").slice(0, 32);
@@ -133,10 +141,11 @@ function liveHiveStats(team) {
 
 function calcScore(team) {
   const live = liveHiveStats(team);
+  const liveCounts = team.phase === "tele" || team.phase === "end" || (team.phase === "auto" && !team.autoFinalized);
   return (
     team.auto.pollen + team.auto.hiveBonus + team.auto.clearBonus +
     team.tele.pollen + team.tele.hiveBonus + team.tele.clearBonus +
-    live.pollen + live.hiveBonus + team.penalties
+    (liveCounts ? live.pollen + live.hiveBonus : 0) + team.penalties
   );
 }
 
@@ -146,10 +155,36 @@ function currentPeriod(team) {
 
 const PHASE_LABELS = { pre: "Pre-game", auto: "Autonomous", tele: "TeleOp", end: "Final" };
 
+function formatTime(seconds) {
+  const safeSeconds = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
 function PhaseBadge({ phase, style = {} }) {
   const colors = { pre: { bg: "#eee", color: "#555" }, auto: { bg: "#d4edda", color: "#155724" }, tele: { bg: "#d0e4ff", color: "#0a2e6e" }, end: { bg: "#e2e2e2", color: "#222" } };
   const c = colors[phase] || colors.pre;
   return <div style={{ fontSize: 11, fontWeight: 500, textAlign: "center", padding: "4px 8px", borderRadius: 6, background: c.bg, color: c.color, ...style }}>{PHASE_LABELS[phase]}</div>;
+}
+
+function MatchTimer({ timer }) {
+  const segment = timer?.segment || "idle";
+  const segmentConfig = MATCH_SEGMENTS[segment];
+  const isRunning = Boolean(segmentConfig && timer?.startedAt);
+  const elapsed = isRunning ? (Date.now() - timer.startedAt) / 1000 : 0;
+  const remaining = segmentConfig ? segmentConfig.seconds - elapsed : 0;
+  const label = segmentConfig ? segmentConfig.label : "Timer";
+  const displayTime = segment === "done" ? "0:00" : isRunning ? formatTime(remaining) : "0:30";
+  const bg = segment === "tele" ? "#eaf1ff" : segment === "transition" ? "#fff7df" : segment === "done" ? "#eee" : "#eef8ee";
+  const color = segment === "tele" ? "#0a2e6e" : segment === "transition" ? "#6b4b00" : segment === "done" ? "#333" : "#155724";
+
+  return (
+    <div style={{ width: "100%", padding: 10, borderRadius: 10, background: bg, color, border: "0.5px solid rgba(0,0,0,0.12)", textAlign: "center" }}>
+      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 56, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{displayTime}</div>
+    </div>
+  );
 }
 
 function Ball({ filled }) {
@@ -172,8 +207,8 @@ function Hive({ count, max, isFull, teamColor, onAdd, onRemove }) {
   );
 }
 
-function ScoreTable({ autoStats, teleStats, livePollen, liveHiveBonus, phase }) {
-  const lp = phase === "tele" || phase === "end" ? "tele" : "auto";
+function ScoreTable({ autoStats, teleStats, livePollen, liveHiveBonus, phase, autoFinalized }) {
+  const lp = phase === "tele" || phase === "end" ? "tele" : phase === "auto" && !autoFinalized ? "auto" : "none";
   const ap = autoStats.pollen + (lp === "auto" ? livePollen : 0);
   const ah = autoStats.hiveBonus + (lp === "auto" ? liveHiveBonus : 0);
   const tp = teleStats.pollen + (lp === "tele" ? livePollen : 0);
@@ -193,7 +228,7 @@ function ScoreTable({ autoStats, teleStats, livePollen, liveHiveBonus, phase }) 
   );
 }
 
-function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onClearHives, onPenalty, onTransition, flashMsg, flashLog }) {
+function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onClearHives, onPenalty, onFinalizeAuto, flashMsg, flashLog }) {
   const isRed = teamId === "red";
   const teamColor = isRed ? "#b02020" : "#1a3db0";
   const clearColor = isRed ? "#8a1515" : "#0e2e8a";
@@ -214,22 +249,22 @@ function TeamPanel({ teamId, teamData, score, onAddToHive, onRemoveFromHive, onC
         <button onClick={onClearHives} style={{ width: "100%", padding: 9, borderRadius: 8, border: `2px solid ${clearColor}`, fontSize: 12, fontWeight: 500, cursor: "pointer", marginTop: 6, background: "white", color: clearColor, fontFamily: "inherit" }}>
           CLEAR HIVES (+10 if all full)
         </button>
-        <ScoreTable autoStats={teamData.auto} teleStats={teamData.tele} livePollen={live.pollen} liveHiveBonus={live.hiveBonus} phase={teamData.phase} />
+        <ScoreTable autoStats={teamData.auto} teleStats={teamData.tele} livePollen={live.pollen} liveHiveBonus={live.hiveBonus} phase={teamData.phase} autoFinalized={teamData.autoFinalized} />
       </div>
       <div style={{ background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: 10, border: "0.5px solid rgba(0,0,0,0.12)" }}>
         <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0, color: "#333", marginBottom: 6 }}>Penalties against {teamId}</div>
-        <button onClick={() => onPenalty("cross")}   style={btnStyle()}>Crossed midline + contact (−10)</button>
+        <button onClick={() => onPenalty("cross")}   style={btnStyle()}>AUTO: Crossed midline + contact (−10)</button>
         <button onClick={() => onPenalty("hivehit")} style={btnStyle()}>Contacted opponent's hive (−3)</button>
         <button onClick={() => onPenalty("descore")} style={btnStyle()}>De-scored opponent pollen (−2)</button>
-        <button onClick={() => onPenalty("gate")}    style={btnStyle(true)}>Activated hive gate (−10)</button>
+        <button onClick={() => onPenalty("gate")}    style={btnStyle(true)}>Activated opponent's hive gate (−10)</button>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 500, borderTop: "0.5px solid rgba(0,0,0,0.12)", marginTop: 4, paddingTop: 4 }}>
           <span style={{ color: "#444" }}>Total penalties</span>
           <span style={{ color: "#a00" }}>{teamData.penalties}</span>
         </div>
       </div>
       {teamData.phase === "auto" && (
-        <button onClick={onTransition} style={{ width: "100%", padding: 11, borderRadius: 8, border: `2px solid ${clearColor}`, background: clearColor, color: "white", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>
-          End Auto → Start TeleOp
+        <button onClick={onFinalizeAuto} style={{ width: "100%", padding: 11, borderRadius: 8, border: `2px solid ${clearColor}`, background: clearColor, color: "white", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>
+          Finalize Autonomous Score
         </button>
       )}
       <div style={{ fontSize: 11, color: "#333", textAlign: "center", minHeight: 16 }}>{flashLog}</div>
@@ -250,7 +285,10 @@ function App() {
   const [flashRedLog, setFlashRedLog] = useState("");
   const [flashBlueLog, setFlashBlueLog] = useState("");
   const [syncStatus, setSyncStatus] = useState("connecting...");
+  const [timerTick, setTimerTick] = useState(0);
   const flashTimeout = useRef({});
+  const buzzerRef = useRef({ auto: false, teleStart: false, final: false });
+  const audioContextRef = useRef(null);
 
   // WebSocket setup
   useEffect(() => {
@@ -372,7 +410,7 @@ function App() {
 
   const snapshot = (s) => {
     const hist = [...(s.history || [])];
-    hist.push(JSON.stringify({ red: JSON.parse(JSON.stringify(s.red)), blue: JSON.parse(JSON.stringify(s.blue)) }));
+    hist.push(JSON.stringify({ red: JSON.parse(JSON.stringify(s.red)), blue: JSON.parse(JSON.stringify(s.blue)), timer: JSON.parse(JSON.stringify(s.timer || defaultTimer())) }));
     if (hist.length > 30) hist.shift();
     return hist;
   };
@@ -381,12 +419,86 @@ function App() {
     setState(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       next.history = snapshot(prev);
+      next.timer = next.timer || defaultTimer();
       fn(next);
       stateRef.current = next;
       broadcast(next);
       return next;
     });
   };
+
+  const updateSystem = useCallback((fn) => {
+    setState(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      next.timer = next.timer || defaultTimer();
+      fn(next);
+      stateRef.current = next;
+      broadcast(next);
+      return next;
+    });
+  }, [broadcast]);
+
+  const playBuzzer = useCallback((count = 3) => {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const audio = audioContextRef.current || new AudioContext();
+    audioContextRef.current = audio;
+    const gain = audio.createGain();
+    gain.gain.setValueAtTime(0.18, audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + (count * 0.25) + 0.3);
+    gain.connect(audio.destination);
+    Array.from({ length: count }, (_, i) => i * 0.25).forEach(offset => {
+      const oscillator = audio.createOscillator();
+      oscillator.type = "square";
+      oscillator.frequency.setValueAtTime(440, audio.currentTime + offset);
+      oscillator.connect(gain);
+      oscillator.start(audio.currentTime + offset);
+      oscillator.stop(audio.currentTime + offset + 0.18);
+    });
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => setTimerTick(t => t + 1), 250);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const timer = state.timer || defaultTimer();
+    if (!timer.startedAt || !MATCH_SEGMENTS[timer.segment]) return;
+    const elapsed = (Date.now() - timer.startedAt) / 1000;
+
+    if (timer.segment === "auto" && elapsed >= MATCH_SEGMENTS.auto.seconds && !buzzerRef.current.auto) {
+      buzzerRef.current.auto = true;
+      playBuzzer(3);
+      updateSystem(s => {
+        s.timer = { segment: "transition", startedAt: Date.now() };
+      });
+    }
+
+    if (timer.segment === "transition" && elapsed >= MATCH_SEGMENTS.transition.seconds && !buzzerRef.current.teleStart) {
+      buzzerRef.current.teleStart = true;
+      playBuzzer(1);
+      updateSystem(s => {
+        if (s.red.phase === "auto") bankHives(s, "red", "auto", { clear: false, finalize: true });
+        if (s.blue.phase === "auto") bankHives(s, "blue", "auto", { clear: false, finalize: true });
+        s.red.phase = "tele";
+        s.blue.phase = "tele";
+        s.timer = { segment: "tele", startedAt: Date.now() };
+      });
+    }
+
+    if (timer.segment === "tele" && elapsed >= MATCH_SEGMENTS.tele.seconds && !buzzerRef.current.final) {
+      buzzerRef.current.final = true;
+      playBuzzer(3);
+      updateSystem(s => {
+        bankHives(s, "red", "tele");
+        bankHives(s, "blue", "tele");
+        s.red.phase = "end";
+        s.blue.phase = "end";
+        s.timer = { segment: "done", startedAt: Date.now() };
+      });
+    }
+  }, [state.timer, timerTick, playBuzzer, updateSystem]);
 
   const addToHive = (team, i) => {
     const t = stateRef.current[team];
@@ -404,12 +516,14 @@ function App() {
     update(s => { s[team].hives[i]--; });
   };
 
-  const bankHives = (s, team, period) => {
+  const bankHives = (s, team, period, options = {}) => {
+    if (period === "auto" && options.finalize && s[team].autoFinalized) return;
     s[team].hives.forEach((h, i) => {
       s[team][period].pollen += h;
       if (h >= HIVE_MAX[i]) s[team][period].hiveBonus += 5;
     });
-    s[team].hives = [0, 0, 0];
+    if (period === "auto" && options.finalize) s[team].autoFinalized = true;
+    if (options.clear !== false) s[team].hives = [0, 0, 0];
   };
 
   const clearHives = (team) => {
@@ -433,15 +547,32 @@ function App() {
   };
 
   const newGame = () => {
+    buzzerRef.current = { auto: false, teleStart: false, final: false };
     update(s => {
       s.red  = defaultTeam(); s.red.phase  = "auto";
       s.blue = defaultTeam(); s.blue.phase = "auto";
+      s.timer = defaultTimer();
     });
   };
 
-  const transitionTeam = (team) => {
+  const startTimer = () => {
+    const timer = stateRef.current.timer || defaultTimer();
+    if (timer.startedAt && timer.segment !== "done") return;
+    buzzerRef.current = { auto: false, teleStart: false, final: false };
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext && !audioContextRef.current) audioContextRef.current = new AudioContext();
+    audioContextRef.current?.resume?.();
+    update(s => {
+      s.timer = { segment: "auto", startedAt: Date.now() };
+    });
+  };
+
+  const finalizeAuto = (team) => {
     if (stateRef.current[team].phase !== "auto") return;
-    update(s => { bankHives(s, team, "auto"); s[team].phase = "tele"; });
+    update(s => {
+      bankHives(s, team, "auto", { clear: false, finalize: true });
+      s[team].phase = "pre";
+    });
   };
 
   const undoLast = () => {
@@ -458,11 +589,10 @@ function App() {
 
   const redScore  = calcScore(state.red);
   const blueScore = calcScore(state.blue);
-  const bothEnd   = state.red.phase === "end" && state.blue.phase === "end";
 
   return (
     <div className="app-shell">
-      <TeamPanel teamId="red"  teamData={state.red}  score={redScore}  onAddToHive={i => addToHive("red", i)}  onRemoveFromHive={i => removeFromHive("red", i)}  onClearHives={() => clearHives("red")}  onPenalty={t => addPenalty("red", t)}  onTransition={() => transitionTeam("red")}  flashMsg={flashRed}  flashLog={flashRedLog} />
+      <TeamPanel teamId="red"  teamData={state.red}  score={redScore}  onAddToHive={i => addToHive("red", i)}  onRemoveFromHive={i => removeFromHive("red", i)}  onClearHives={() => clearHives("red")}  onPenalty={t => addPenalty("red", t)}  onFinalizeAuto={() => finalizeAuto("red")} flashMsg={flashRed}  flashLog={flashRedLog} />
 
       <div className="middle-panel">
         <div className="room-control">
@@ -475,25 +605,14 @@ function App() {
         </div>
         <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0, color: "#333", textAlign: "center" }}>Game</div>
         <button onClick={newGame} style={{ padding: "8px 12px", borderRadius: 8, border: "2px solid #2a7a2a", background: "#2a7a2a", fontSize: 12, fontWeight: 500, cursor: "pointer", width: "100%", color: "white", fontFamily: "inherit" }}>▶ New Game</button>
-        <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
-        <div style={{ fontSize: 10, color: "#555", textAlign: "center" }}>Red phase</div>
-        <PhaseBadge phase={state.red.phase} style={{ width: "100%" }} />
-        <div style={{ fontSize: 10, color: "#555", textAlign: "center" }}>Blue phase</div>
-        <PhaseBadge phase={state.blue.phase} style={{ width: "100%" }} />
-        <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
-        <div style={{ textAlign: "center", fontSize: 13, fontWeight: 500 }}>
-          {bothEnd
-            ? redScore > blueScore ? <span style={{ color: "#b02020" }}>🔴 Red wins!<br />{redScore} – {blueScore}</span>
-            : blueScore > redScore ? <span style={{ color: "#1a3db0" }}>🔵 Blue wins!<br />{blueScore} – {redScore}</span>
-            : <span style={{ color: "#333" }}>Tied<br />{redScore} – {blueScore}</span>
-            : <span style={{ fontSize: 12, color: "#333" }}>{redScore} – {blueScore}</span>}
-        </div>
+        <button onClick={startTimer} style={{ padding: "8px 12px", borderRadius: 8, border: "2px solid #2a5d82", background: "#2a5d82", fontSize: 12, fontWeight: 500, cursor: "pointer", width: "100%", color: "white", fontFamily: "inherit" }}>⏱ Start Timer</button>
+        <MatchTimer timer={state.timer || defaultTimer()} />
         <div style={{ width: "100%", height: "0.5px", background: "#ccc" }} />
         <button onClick={undoLast} style={{ fontSize: 11, color: "#333", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", width: "100%", fontFamily: "inherit" }}>↩ undo</button>
         <div style={{ fontSize: 11, color: "#555", textAlign: "center" }}>{syncStatus}</div>
       </div>
 
-      <TeamPanel teamId="blue" teamData={state.blue} score={blueScore} onAddToHive={i => addToHive("blue", i)} onRemoveFromHive={i => removeFromHive("blue", i)} onClearHives={() => clearHives("blue")} onPenalty={t => addPenalty("blue", t)} onTransition={() => transitionTeam("blue")} flashMsg={flashBlue} flashLog={flashBlueLog} />
+      <TeamPanel teamId="blue" teamData={state.blue} score={blueScore} onAddToHive={i => addToHive("blue", i)} onRemoveFromHive={i => removeFromHive("blue", i)} onClearHives={() => clearHives("blue")} onPenalty={t => addPenalty("blue", t)} onFinalizeAuto={() => finalizeAuto("blue")} flashMsg={flashBlue} flashLog={flashBlueLog} />
     </div>
   );
 }
