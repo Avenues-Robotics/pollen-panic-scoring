@@ -174,13 +174,16 @@ function MatchTimer({ timer }) {
   const isRunning = Boolean(segmentConfig && timer?.startedAt);
   const elapsed = isRunning ? (Date.now() - timer.startedAt) / 1000 : 0;
   const remaining = segmentConfig ? segmentConfig.seconds - elapsed : 0;
-  const label = segmentConfig ? segmentConfig.label : "Timer";
+  const finalCountdownSecond = segment === "transition" && isRunning && remaining > 0 && remaining <= 3 ? Math.ceil(remaining) : null;
+  const isFinalFlash = Boolean(finalCountdownSecond && (remaining % 1) > 0.65);
+  const label = finalCountdownSecond ? `TeleOp in ${finalCountdownSecond}` : segmentConfig ? segmentConfig.label : "Timer";
   const displayTime = segment === "done" ? "0:00" : isRunning ? formatTime(remaining) : "0:30";
-  const bg = segment === "tele" ? "#eaf1ff" : segment === "transition" ? "#fff7df" : segment === "done" ? "#eee" : "#eef8ee";
-  const color = segment === "tele" ? "#0a2e6e" : segment === "transition" ? "#6b4b00" : segment === "done" ? "#333" : "#155724";
+  const bg = isFinalFlash ? "#b00020" : segment === "tele" ? "#eaf1ff" : segment === "transition" ? "#fff7df" : segment === "done" ? "#eee" : "#eef8ee";
+  const color = isFinalFlash ? "white" : segment === "tele" ? "#0a2e6e" : segment === "transition" ? "#6b4b00" : segment === "done" ? "#333" : "#155724";
+  const border = isFinalFlash ? "2px solid #7a0016" : "0.5px solid rgba(0,0,0,0.12)";
 
   return (
-    <div style={{ width: "100%", padding: 10, borderRadius: 10, background: bg, color, border: "0.5px solid rgba(0,0,0,0.12)", textAlign: "center" }}>
+    <div style={{ width: "100%", padding: 10, borderRadius: 10, background: bg, color, border, textAlign: "center" }}>
       <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, fontWeight: 700 }}>{label}</div>
       <div style={{ fontSize: 56, lineHeight: 1.05, fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{displayTime}</div>
     </div>
@@ -287,7 +290,7 @@ function App() {
   const [syncStatus, setSyncStatus] = useState("connecting...");
   const [timerTick, setTimerTick] = useState(0);
   const flashTimeout = useRef({});
-  const buzzerRef = useRef({ auto: false, teleStart: false, final: false });
+  const buzzerRef = useRef({ auto: false, transitionSecond: null, teleStart: false, final: false });
   const audioContextRef = useRef(null);
 
   // WebSocket setup
@@ -469,10 +472,20 @@ function App() {
 
     if (timer.segment === "auto" && elapsed >= MATCH_SEGMENTS.auto.seconds && !buzzerRef.current.auto) {
       buzzerRef.current.auto = true;
+      buzzerRef.current.transitionSecond = null;
       playBuzzer(3);
       updateSystem(s => {
         s.timer = { segment: "transition", startedAt: Date.now() };
       });
+    }
+
+    if (timer.segment === "transition") {
+      const remaining = MATCH_SEGMENTS.transition.seconds - elapsed;
+      const countdownSecond = remaining > 0 && remaining <= 3 ? Math.ceil(remaining) : null;
+      if (countdownSecond && buzzerRef.current.transitionSecond !== countdownSecond) {
+        buzzerRef.current.transitionSecond = countdownSecond;
+        playBuzzer(1);
+      }
     }
 
     if (timer.segment === "transition" && elapsed >= MATCH_SEGMENTS.transition.seconds && !buzzerRef.current.teleStart) {
@@ -547,7 +560,7 @@ function App() {
   };
 
   const newGame = () => {
-    buzzerRef.current = { auto: false, teleStart: false, final: false };
+    buzzerRef.current = { auto: false, transitionSecond: null, teleStart: false, final: false };
     update(s => {
       s.red  = defaultTeam(); s.red.phase  = "auto";
       s.blue = defaultTeam(); s.blue.phase = "auto";
@@ -558,7 +571,7 @@ function App() {
   const startTimer = () => {
     const timer = stateRef.current.timer || defaultTimer();
     if (timer.startedAt && timer.segment !== "done") return;
-    buzzerRef.current = { auto: false, teleStart: false, final: false };
+    buzzerRef.current = { auto: false, transitionSecond: null, teleStart: false, final: false };
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (AudioContext && !audioContextRef.current) audioContextRef.current = new AudioContext();
     audioContextRef.current?.resume?.();
